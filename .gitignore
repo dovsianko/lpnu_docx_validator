@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+*.report.txt
+*.report.html
+*.report.json
+*.checked.docx
+~$*.docx
+.ruff_cache/
