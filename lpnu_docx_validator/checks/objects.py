@@ -26,6 +26,7 @@ def check_captions(ctx: Ctx) -> None:
     fig_refs = _first_refs(ctx, s["captions.figure_reference_pattern"])
     tbl_refs = _first_refs(ctx, s["captions.table_reference_pattern"])
     cont_re = re.compile(s["captions.table_continuation_pattern"])
+    fmt_re = re.compile(s["captions.format_pattern"])
     seen: dict[tuple[str, str], Block] = {}
 
     for pos, b in ctx.in_regions("main", "appendix"):
@@ -38,9 +39,11 @@ def check_captions(ctx: Ctx) -> None:
                 ctx.rep.add("caption_duplicate", f"номер {ua} {num} повторюється", b,
                             details=[f"Попередній підпис: {seen[key].text[:80]}"])
             seen[key] = b
+            if not fmt_re.match(b.text):
+                ctx.rep.add("caption_format", f"підпис {ua} {num} не за зразком «{'Рис.' if is_fig else 'Таблиця'} {num} — Назва»", b)
             if is_fig:
                 prev = ctx.prev_meaningful(pos)
-                if prev is None or prev.kind != "image_paragraph":
+                if not b.extra.get("with_image") and (prev is None or prev.kind != "image_paragraph"):
                     ctx.rep.add("caption_position", f"підпис рисунка {num} не стоїть одразу після рисунка", b)
             else:
                 nxt = ctx.next_meaningful(pos)
@@ -54,7 +57,7 @@ def check_captions(ctx: Ctx) -> None:
                 ctx.rep.add("caption_trailing_dot", f"у кінці підпису {ua} {num} не ставлять крапку", b)
             ref = (fig_refs if is_fig else tbl_refs).get(num)
             obj_pos = pos
-            if is_fig:
+            if is_fig and not b.extra.get("with_image"):
                 prev = ctx.prev_meaningful(pos)
                 if prev is not None and prev.kind == "image_paragraph":
                     obj_pos = ctx.blocks.index(prev)
@@ -67,6 +70,9 @@ def check_captions(ctx: Ctx) -> None:
 
         elif b.kind == "image_paragraph":
             nxt = ctx.next_meaningful(pos)
+            prev = ctx.prev_meaningful(pos)
+            if prev is not None and prev.kind == "figure_caption" and not prev.extra.get("with_image"):
+                continue  # підпис стоїть над рисунком — про це вже є caption_position
             if nxt is None or nxt.kind != "figure_caption":
                 ctx.rep.add("caption_missing", "після рисунка немає підпису виду «Рис. 1.1 — Назва»", b, label="рисунок без підпису")
         elif b.kind == "table":

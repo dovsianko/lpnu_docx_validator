@@ -501,3 +501,103 @@ def test_libreoffice_toc_styles_and_sdt(check):
     res = check(b)
     assert "toc_manual" not in rules_of(res)
     assert res.model.blocks[res.model.main_start].text == "ВСТУП"
+
+
+# ---------------------------------------------------------------------------
+# Випадки зі справжніх курсових (листопад 2026)
+# ---------------------------------------------------------------------------
+
+def test_caption_without_dash_keeps_full_number(check):
+    """«Рис. 1.2 Назва» розпізнавалось як рисунок «1» → хибні дублікати й «немає згадки рисунка 1»."""
+    b = chapter_doc("Див. рис. 1.1 і рис. 1.2.")
+    b.figure("1.1")
+    b.body("Текст.")
+    b.figure("1.2")
+    b.doc.paragraphs[-1].text = "Рис. 1.2 Ініціалізація бази даних"
+    b.body("Текст.")
+    res = check(b)
+    assert [x.caption_num for x in res.model.blocks if x.kind == "figure_caption"] == ["1.1", "1.2"]
+    rules = rules_of(res)
+    assert "caption_duplicate" not in rules and "object_reference_missing" not in rules
+    assert rules.count("caption_format") == 1  # «Рис. 1.2 Назва» без тире
+
+
+def test_reference_and_caption_without_dot(check, settings):
+    assert find_object_refs(re.compile(settings["captions.figure_reference_pattern"]), "адрес (рис 1.3).") == ["1.3"]
+    assert find_object_refs(re.compile(settings["captions.figure_reference_pattern"]), "для користувача 1.3") == []
+    b = chapter_doc("Див. рис 1.1.")
+    b.figure("1.1")
+    b.doc.paragraphs[-1].text = "Рис 1.1. Головна сторінка"
+    b.body("Текст.")
+    rules = rules_of(check(b))
+    assert "caption_missing" not in rules and "caption_format" in rules
+
+
+def test_toc_heading_style_is_the_toc_title(check):
+    b = chapter_doc("Текст [1].")
+    st = b.doc.styles["TOC Heading"]
+    for p in b.doc.paragraphs:
+        if p.text == "ЗМІСТ":
+            p.style = st
+    res = check(b)
+    assert not [i for i in res.issues if i.rule == "structure_missing"]
+    assert res.model.toc_pos is not None
+
+
+def test_image_and_caption_in_one_paragraph(check):
+    import io
+    b = chapter_doc("Результат показано на рис. 1.1.")
+    p = b.doc.add_paragraph()
+    p.add_run("<script>alert(1)</script>")
+    p.add_run().add_break()
+    p.add_run().add_picture(io.BytesIO(png_bytes()), width=Cm(12))
+    p.add_run().add_break()
+    p.add_run("Рис. 1.1 — Результат виконання XSS")
+    p.alignment = A.CENTER
+    b.body("Пояснення.")
+    rules = rules_of(check(b))
+    assert not {"caption_missing", "caption_position", "object_reference_missing"} & set(rules)
+
+
+def test_caption_above_image_reported_once(check):
+    b = chapter_doc("Див. рис. 1.1.")
+    b.p("Рис. 1.1 — Схема", alignment=A.CENTER, first_line_indent=Cm(0))
+    b.figure(caption=None)
+    b.body("Текст.")
+    rules = rules_of(check(b))
+    assert rules.count("caption_position") == 1 and "caption_missing" not in rules
+
+
+def test_code_in_regular_font_is_not_body_text(check):
+    b = chapter_doc("Образ збирають командою:")
+    for line in ("docker login --username AWS --password-stdin \\", "    839070695658.dkr.ecr.eu-west-3.amazonaws.com",
+                 "# Отримання офіційного образу", '<script>alert("XSS")</script>'):
+        p = b.p(line, first_line_indent=Cm(0), alignment=A.LEFT)
+        p.runs[0].font.size = Pt(12)
+    b.body("Після цього образ з'являється в репозиторії [1].")
+    res = check(b)
+    flagged = {i.rule for i in res.issues if i.block is not None and i.block.kind == "code"}
+    assert not flagged
+    assert not {"leading_spaces", "straight_quotes", "paragraph_font_size"} & set(rules_of(res))
+
+
+def test_manual_dash_list_items(check):
+    b = chapter_doc("Завдання роботи:")
+    for t in ("– зібрати образ застосунку;", "– налаштувати мережу.", "а) перший варіант;", "1) другий варіант."):
+        p = b.p(t, alignment=A.LEFT)
+        p.paragraph_format.first_line_indent = Cm(-0.5)
+        p.paragraph_format.left_indent = Cm(1)
+    b.body("Текст після списку [1].")
+    assert not {"paragraph_indent", "paragraph_alignment"} & set(rules_of(check(b)))
+
+
+def test_toc_outdated_counts_front_matter_headings(check):
+    b = Chapter().title_page()
+    b.doc.add_heading("ІНДИВІДУАЛЬНЕ ЗАВДАННЯ", 1)
+    b.toc(["ІНДИВІДУАЛЬНЕ ЗАВДАННЯ", "ВСТУП", "РОЗДІЛ 1 АНАЛІЗ", "1.1 Огляд", "ВИСНОВКИ", "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ"])
+    b.heading("ВСТУП")
+    b.body("Текст [1].")
+    b.heading("РОЗДІЛ 1 АНАЛІЗ")
+    b.heading("1.1 Огляд", 2, new_page=False)
+    b.body("Текст.")
+    assert "toc_outdated" not in rules_of(check(b))

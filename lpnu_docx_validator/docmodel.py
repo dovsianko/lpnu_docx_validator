@@ -445,7 +445,29 @@ class Block:
         return next(iter(self.el.iter(W_P)), None)
 
 
-TOC_STYLE_RE = re.compile(r"(?i)^(toc|зміст|оглавление|table of contents|contents|index)\s*\d+$|^(toc|contents)\s*heading$")
+TOC_STYLE_RE = re.compile(r"(?i)^(toc|зміст|оглавление|table of contents|contents|index)\s*\d+$")
+# Ручні списки: «– пункт», «• пункт», «а) пункт», «1) пункт»
+MANUAL_LIST_RE = re.compile(r"^\s*(?:[–—\-•●▪◦·*]|[а-яіїєґa-z]\)|\d{1,2}\))\s+\S")
+# Код, набраний звичайним шрифтом: команди, конфіги, коментарі
+CODE_START_RE = re.compile(
+    r"^\s*(?:\$\s|#|//|--\w|<[/!?\w]|[{}\[\]]|(?:sudo|docker|aws|kubectl|git|npm|pip|python3?|curl|wget|ssh|scp|cd|ls|cat|echo|"
+    r"apt(?:-get)?|yum|dnf|terraform|helm|mysql|psql|chmod|chown|export|systemctl|nano|vim|ping|nslookup|dig|"
+    r"SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|FROM|RUN|COPY|ENV|EXPOSE|CMD|ENTRYPOINT|WORKDIR|"
+    r"interface|router|ip|no|enable|configure|hostname|access-list)\b)")
+CYRILLIC_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґ]")
+CODE_CHARS_RE = re.compile(r"[\\{}=<>$|;]|--|://|\w/\w|\(\)|\"\s*:")
+
+
+def looks_like_code(text: str) -> bool:
+    """Евристика для лістингів, набраних не моноширинним шрифтом."""
+    t = text.strip()
+    if not t:
+        return False
+    if t.endswith("\\"):
+        return True
+    if CYRILLIC_RE.search(t):
+        return bool(re.match(r"^\s*(#|//)\s", t)) and len(t) < 120  # коментар у лістингу
+    return bool(CODE_START_RE.match(t) or CODE_CHARS_RE.search(t))
 
 
 def is_heading_style(style_name: str) -> bool:
@@ -529,7 +551,7 @@ class Classifier:
         text = normalize_text(raw)
         style = self.r.para_style_name(p_el)
         b = Block(idx, "paragraph", text, p_el, raw_text=raw, paragraph_no=paragraph_no, in_table=in_table)
-        b.is_list = self.r.is_list_item(p_el)
+        b.is_list = self.r.is_list_item(p_el) or bool(MANUAL_LIST_RE.match(raw))
         img = has_image(p_el)
         if not text and not img and not has_formula(p_el):
             b.kind = "empty"
@@ -540,8 +562,17 @@ class Classifier:
             return b
         fig = self.figure_caption_re.match(text)
         tbl = self.table_caption_re.match(text)
+        if img and not fig:
+            # рисунок і підпис в одному абзаці (підпис після Shift+Enter)
+            for line in reversed([normalize_text(x) for x in raw.split("\n") if x.strip()]):
+                fig = self.figure_caption_re.match(line)
+                if fig:
+                    b.text = line
+                    break
         if fig:
             b.kind, b.caption_num = "figure_caption", fig.group("num")
+            if img:
+                b.extra["with_image"] = True
             return b
         if tbl:
             b.kind, b.caption_num = "table_caption", tbl.group("num")
@@ -565,7 +596,7 @@ class Classifier:
         if level is not None and not in_table:
             b.kind, b.heading_level = "heading", level
             return b
-        if self.is_code(p_el):
+        if self.is_code(p_el) or looks_like_code(raw):
             b.kind, b.is_code = "code", True
         return b
 
@@ -613,6 +644,15 @@ def build_model(path: Path, settings: Settings, doc: Optional[_Document] = None)
             continue
         tb = Block(len(blocks) + 1, "table", "", el, section_no=section_no)
         blocks.append(tb)
+
+    # продовження лістингу: рядок після «\\» або без кирилиці між двома рядками коду
+    for i, b in enumerate(blocks):
+        if b.kind != "paragraph" or not b.text or CYRILLIC_RE.search(b.text):
+            continue
+        prev = blocks[i - 1] if i > 0 else None
+        nxt = blocks[i + 1] if i + 1 < len(blocks) else None
+        if prev is not None and prev.kind == "code" and (prev.raw_text.rstrip().endswith("\\") or (nxt is not None and nxt.kind == "code")):
+            b.kind, b.is_code = "code", True
 
     # початок основної частини
     main_re = re.compile(settings["structure.main_start_pattern"])

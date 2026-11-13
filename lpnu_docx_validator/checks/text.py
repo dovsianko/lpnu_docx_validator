@@ -236,7 +236,7 @@ def check_images(ctx: Ctx) -> None:
 
     min_dpi = ctx.s["images.min_dpi"]
     for _, b in ctx.in_regions("main", "appendix"):
-        if b.kind != "image_paragraph":
+        if b.kind != "image_paragraph" and not b.extra.get("with_image"):
             continue
         width_limit = ctx.model.section_text_width_cm(b.section_no)
         for inline in xp(b.el, ".//wp:inline | .//wp:anchor"):
@@ -244,7 +244,7 @@ def check_images(ctx: Ctx) -> None:
             if ext is None:
                 continue
             cx = int(ext.get("cx") or 0)
-            if width_limit and cx / EMU_PER_CM > width_limit + 0.1:
+            if width_limit and cx / EMU_PER_CM > width_limit + 0.3:
                 ctx.rep.add("image_too_wide", f"ширина зображення {cx / EMU_PER_CM:.1f} см більша за ширину тексту {width_limit:.1f} см", b,
                             label="рисунок")
             for blip in xp(inline, ".//a:blip"):

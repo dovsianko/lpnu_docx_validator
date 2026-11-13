@@ -76,7 +76,10 @@ def _check_toc_matches(ctx: Ctx) -> None:
     if not entries:
         return
     max_lvl = ctx.s["structure.toc_max_level"]
-    heads = [b for b in ctx.blocks if b.kind == "heading" and not b.in_front_matter and (b.heading_level or 1) <= max_lvl]
+    toc_pos = ctx.model.toc_pos
+    heads = [b for i, b in enumerate(ctx.blocks)
+             if b.kind == "heading" and i != toc_pos and (b.heading_level or 1) <= max_lvl
+             and (toc_pos is None or i > toc_pos or b.text != ctx.blocks[toc_pos].text)]
     entry_keys = [_norm(re.sub(r"[\s.…·_\-]*\d+\s*$", "", e.text)) for e in entries]
     head_keys = [_norm(h.text) for h in heads]
 
