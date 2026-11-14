@@ -601,3 +601,88 @@ def test_toc_outdated_counts_front_matter_headings(check):
     b.heading("1.1 Огляд", 2, new_page=False)
     b.body("Текст.")
     assert "toc_outdated" not in rules_of(check(b))
+
+
+# ---------------------------------------------------------------------------
+# Профіль «Курсовий проект ІКС» і можливості, які він використовує
+# ---------------------------------------------------------------------------
+
+def iks_doc(*, chapter="1 КОНТЕЙНЕРИЗАЦІЯ ЗАСТОСУНКУ", toc_extra=()):
+    b = Chapter().title_page()
+    task = b.doc.add_heading("ІНДИВІДУАЛЬНЕ ЗАВДАННЯ", 1)  # друга сторінка, ще без номера: переносимо в 1-шу секцію
+    sect_p = next(p for p in b.doc.paragraphs if p._p.find(qn("w:pPr")) is not None and p._p.pPr.find(qn("w:sectPr")) is not None)
+    sect_p._p.addprevious(task._p)
+    b.toc([*toc_extra, "АНОТАЦІЯ", "ВСТУП", "ОСНОВНА (ТЕХНІЧНА) ЧАСТИНА", chapter, "1.1 Збірка образу",
+           "ВИСНОВКИ", "СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ", "ДОДАТКИ"])
+    for st in ("Normal", "Heading 2", "Heading 3"):
+        b.doc.styles[st].paragraph_format.first_line_indent = Cm(1)
+    b.heading("АНОТАЦІЯ")
+    b.body("Анотація роботи [1].")
+    b.heading("ВСТУП")
+    b.body("Вступ.")
+    b.heading("ОСНОВНА (ТЕХНІЧНА) ЧАСТИНА")
+    b.heading(chapter, 2, new_page=False)
+    b.heading("1.1 Збірка образу", 3, new_page=False)
+    b.body("Схему наведено на рис. 1.1.")
+    b.figure("1.1")
+    b.body("Текст після рисунка.")
+    b.finish()
+    b.heading("ДОДАТКИ")
+    return b
+
+
+@pytest.fixture
+def iks():
+    from lpnu_docx_validator.settings import load_profile
+    return load_profile("iks_coursework")
+
+
+def test_iks_profile_accepts_methodology_layout(check, iks):
+    res = check(iks_doc(), iks)
+    noisy = [(i.rule, i.message) for i in res.issues if i.severity != "INFO" and i.rule not in {"page_count_unknown", "page_count_out_of_range"}]
+    assert noisy == []
+    ch = next(b for b in res.model.blocks if b.kind == "heading" and b.text.startswith("1 КОНТЕЙНЕРИЗАЦІЯ"))
+    assert ch.chapter == "1"  # розділ без слова «РОЗДІЛ», хоча стиль «Заголовок 2»
+
+
+def test_iks_chapter_dot_and_forbidden_toc_entry(check, iks):
+    res = check(iks_doc(chapter="1. КОНТЕЙНЕРИЗАЦІЯ ЗАСТОСУНКУ", toc_extra=["ІНДИВІДУАЛЬНЕ ЗАВДАННЯ"]), iks)
+    rules = rules_of(res)
+    assert "heading_number_dot" in rules
+    assert "toc_forbidden_entry" in rules
+
+
+def test_margins_at_least(check, settings):
+    b = chapter_doc("Текст [1].")
+    sec = b.doc.sections[-1]
+    sec.right_margin = Cm(1.2)
+    settings.values.update({"page.margin_right_cm": 1.0, "page.margin_check": "AT_LEAST"})
+    assert "page_setup" not in rules_of(check(b, settings))
+    sec.right_margin = Cm(0.8)
+    assert "page_setup" in rules_of(check(b, settings))
+
+
+def test_online_source_without_year(check, settings):
+    b = chapter_doc("Текст [1].").finish(sources=["Хмарні обчислення [Електронний ресурс] – Режим доступу до ресурсу: "
+                                                  "https://uk.wikipedia.org/wiki/Хмарні_обчислення"])
+    assert "source_missing_year" in rules_of(check(b))
+    settings.values["bibliography.online_requires_year"] = False
+    assert "source_missing_year" not in rules_of(check(b, settings))
+
+
+def test_manual_toc_body_is_not_a_chapter(check):
+    b = Chapter().title_page()
+    b.toc(["ВСТУП", "РОЗДІЛ 1 АНАЛІЗ", "ВИСНОВКИ"], auto=False)
+    b.heading("ВСТУП")
+    b.body("Текст [1].")
+    b.heading("РОЗДІЛ 1 АНАЛІЗ")
+    b.heading("1.1 Огляд", 2, new_page=False)
+    b.body("Текст.")
+    assert "structure_order" not in rules_of(check(b))
+
+
+def test_pattern_labels():
+    from lpnu_docx_validator.checks.structure import pattern_label
+    assert pattern_label(r"(?i)^\s*основна\s*\(?\s*технічна\s*\)?\s*частина\s*$") == "ОСНОВНА (ТЕХНІЧНА) ЧАСТИНА"
+    assert pattern_label(r"^\s*РОЗДІЛ\s+1\b") == "РОЗДІЛ 1"
+    assert pattern_label(r"(?#перший розділ)^\s*1\s") == "перший розділ"

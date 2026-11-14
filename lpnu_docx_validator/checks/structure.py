@@ -17,14 +17,22 @@ LATIN_LOOKALIKE = {"A": "А", "B": "В", "C": "С", "E": "Е", "H": "Н", "K": "
 
 
 def pattern_label(pattern: str) -> str:
-    """Людська назва з регулярного виразу: '(?i)^\\s*(список\\s+...|...)\\s*$' → 'СПИСОК ...'."""
+    """Людська назва з регулярного виразу: '(?i)^\\s*основна\\s*\\(?\\s*технічна…' → 'ОСНОВНА (ТЕХНІЧНА) ЧАСТИНА'."""
+    named = re.search(r"\(\?#([^)]*)\)", pattern)  # явна назва: (?#перший розділ)
+    if named:
+        return named.group(1).strip()
     t = re.sub(r"\(\?[a-zA-Z]+\)", "", pattern)
-    t = t.replace(r"\s+", " ").replace(r"\s*", "").replace(r"\b", "").replace("^", "").replace("$", "")
-    m = re.search(r"\(([^()|]+)\|", t)
-    if m:
-        t = t[: m.start()] + m.group(1) + t[t.find(")", m.end()) + 1:]
-    t = re.sub(r"[()\\?*+\[\]]", "", t)
-    return re.sub(r"\s+", " ", t).strip().upper() or pattern
+    t = re.sub(r"\(\?:[^()]*\)\?", "", t)                      # необов'язкові групи (?:РОЗДІЛ\s+)?
+    t = re.sub(r"\\[sS][*+?]?|\\b|\\d[*+?]?|[\^$]", " ", t)
+    t = re.sub(r"\\([().])\??", r"\1", t)                     # \(? → (
+    t = re.sub(r"\.[*+?]", "", t)
+    m = re.search(r"\(([^()|]+)\|[^()]*\)", t)                  # (a|b) → a
+    while m:
+        t = t[: m.start()] + m.group(1) + t[m.end():]
+        m = re.search(r"\(([^()|]+)\|[^()]*\)", t)
+    t = re.sub(r"[?*+\[\]\\]", "", t)
+    t = re.sub(r"\(\s+", "(", re.sub(r"\s+\)", ")", t))
+    return re.sub(r"\s+", " ", t).strip(" .").upper() or pattern
 
 
 def _norm(text: str) -> str:
@@ -47,8 +55,9 @@ def check_structure(ctx: Ctx) -> None:
     else:
         ctx.rep.info("титульна/службова частина пропущена з перевірок основного тексту", ctx.blocks[m.main_start])
 
+    toc_body = range((m.toc_pos or 0) + 1, m.main_start) if m.toc_pos is not None and m.main_start is not None else range(0)
     candidates = [(i, b) for i, b in enumerate(ctx.blocks)
-                  if b.kind in {"heading", "paragraph"} and b.text and len(b.text) <= 200]
+                  if b.kind in {"heading", "paragraph"} and b.text and len(b.text) <= 200 and i not in toc_body]
     found: list[tuple[int, str]] = []
     for pat in ctx.s["structure.required_sections"]:
         rx = re.compile(pat)
@@ -75,6 +84,12 @@ def _check_toc_matches(ctx: Ctx) -> None:
     entries = [b for b in ctx.blocks if b.kind == "toc_entry"]
     if not entries:
         return
+    for pat in ctx.s["structure.toc_forbidden_patterns"]:
+        rx = re.compile(pat)
+        hit = next((e for e in entries if rx.search(e.text)), None)
+        if hit is not None:
+            name = re.sub(r"[\s.…]*\d+$", "", hit.text)
+            ctx.rep.add("toc_forbidden_entry", f"цей пункт не має бути у змісті: {short_quote(name, 60)}", hit)
     max_lvl = ctx.s["structure.toc_max_level"]
     toc_pos = ctx.model.toc_pos
     heads = [b for i, b in enumerate(ctx.blocks)
@@ -86,7 +101,8 @@ def _check_toc_matches(ctx: Ctx) -> None:
     def matches(a: str, b: str) -> bool:
         return a == b or (min(len(a), len(b)) >= 5 and (a.startswith(b) or b.startswith(a)))
 
-    missing = [h for h, k in zip(heads, head_keys) if not any(matches(k, e) for e in entry_keys)]
+    after_toc = [toc_pos is None or ctx.blocks.index(h) > toc_pos for h in heads]
+    missing = [h for h, k, a in zip(heads, head_keys, after_toc) if a and not any(matches(k, e) for e in entry_keys)]
     stale = [e for e, k in zip(entries, entry_keys) if k and not any(matches(k, h) for h in head_keys)]
     if missing:
         names = "; ".join(short_quote(h.text, 50) for h in missing[:8]) + (" …" if len(missing) > 8 else "")

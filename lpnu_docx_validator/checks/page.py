@@ -54,9 +54,12 @@ def check_page_setup(ctx: Ctx) -> None:
             ("нижнє поле", section.bottom_margin, "page.margin_bottom_cm"),
         ):
             a = _cm(actual)
-            if a is None or abs(a - s[key]) > tol:
+            at_least = s["page.margin_check"] == "AT_LEAST"
+            bad = a is None or (a < s[key] - tol if at_least else abs(a - s[key]) > tol)
+            if bad:
                 got = "невідомо" if a is None else f"{a:.2f} см"
-                ctx.rep.add("page_setup", f"{name}: {got}, очікується {s[key]:.2f} см", location=loc)
+                want = f"не менше {s[key]:.2f} см" if at_least else f"{s[key]:.2f} см"
+                ctx.rep.add("page_setup", f"{name}: {got}, очікується {want}", location=loc)
 
 
 # ---------------------------------------------------------------------------

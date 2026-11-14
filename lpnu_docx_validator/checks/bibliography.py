@@ -82,7 +82,7 @@ def check_bibliography(ctx: Ctx) -> None:
             continue
         if len(body) < s["bibliography.min_length"]:
             ctx.rep.add("source_too_short", "надто короткий опис джерела; ймовірно, він неповний", b, label=label)
-        if not year_re.search(text):
+        if not year_re.search(text) and (s["bibliography.online_requires_year"] or not url_re.search(text)):
             ctx.rep.add("source_missing_year", "не знайдено рік видання/публікації", b, label=label)
         if url_re.search(text):
             if not access_re.search(text):

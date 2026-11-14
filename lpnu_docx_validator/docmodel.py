@@ -655,10 +655,20 @@ def build_model(path: Path, settings: Settings, doc: Optional[_Document] = None)
             b.kind, b.is_code = "code", True
 
     # початок основної частини
-    main_re = re.compile(settings["structure.main_start_pattern"])
-    main_start = next((i for i, b in enumerate(blocks) if b.kind == "heading" and main_re.match(b.text)), None)
     toc_re = re.compile(settings["structure.toc_heading_pattern"])
     toc_pos = next((i for i, b in enumerate(blocks) if b.kind in {"heading", "paragraph"} and toc_re.match(b.text)), None)
+    if toc_pos is not None:
+        # зміст, набраний вручну: рядки «Назва ……… 5» / «Назва<Tab>5» одразу після «ЗМІСТ»
+        for b in blocks[toc_pos + 1:]:
+            if b.kind in {"empty", "toc_entry"}:
+                continue
+            if b.kind in {"heading", "paragraph"} and re.search(r"(\t|\.{3,}|…)\s*\d+\s*$", b.raw_text):
+                b.kind, b.heading_level = "toc_entry", None
+                continue
+            break
+    main_re = re.compile(settings["structure.main_start_pattern"])
+    main_start = next((i for i, b in enumerate(blocks)
+                       if b.kind == "heading" and main_re.match(b.text) and (toc_pos is None or i > toc_pos)), None)
     bib_re = re.compile(settings["bibliography.heading_pattern"])
     app_re = cls.appendix_re
     start = main_start or 0
@@ -687,9 +697,10 @@ def build_model(path: Path, settings: Settings, doc: Optional[_Document] = None)
         elif bib_start is not None and i >= bib_start:
             b.region = "bibliography"
         if b.kind == "heading":
-            if (b.heading_level or 1) == 1:
+            m = cls.section_re.match(b.text)
+            if m or (b.heading_level or 1) == 1:
+                # розділ: «РОЗДІЛ 1 …» / «1 НАЗВА» (навіть якщо стиль «Заголовок 2» під «ОСНОВНА ЧАСТИНА») або інша частина 1-го рівня
                 section_title, sub_title = b.text, ""
-                m = cls.section_re.match(b.text)
                 ma = cls.appendix_re.match(b.text)
                 chapter = m.group("num") if m else (ma.group("letter").upper() if ma else None)
             else:
