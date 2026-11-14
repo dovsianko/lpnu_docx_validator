@@ -1,2 +1,4 @@
-python-docx
-PyYAML
+python-docx>=1.2.0
+PyYAML>=6.0
+# необов'язково: зведена таблиця .xlsx (без нього — .csv)
+openpyxl>=3.1

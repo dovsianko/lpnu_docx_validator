@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lpnu-docx-validator"
+version = "4.0.0"
+description = "Перевірка оформлення студентських робіт у форматі DOCX"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["python-docx>=1.2.0", "PyYAML>=6.0"]
+
+[project.optional-dependencies]
+excel = ["openpyxl>=3.1"]
+dnd = ["tkinterdnd2>=0.4"]
+dev = ["pytest", "ruff", "openpyxl>=3.1"]
+
+[project.scripts]
+docx-validator = "lpnu_docx_validator.cli:main"
+
+[project.gui-scripts]
+docx-validator-gui = "lpnu_docx_validator.gui:run"
+
+[tool.setuptools.packages.find]
+include = ["lpnu_docx_validator*"]
+
+[tool.setuptools.package-data]
+lpnu_docx_validator = ["profiles/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501", "E702"]

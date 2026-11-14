@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -r requirements_docx_validator.txt pytest ruff
+      - run: ruff check lpnu_docx_validator tests
+      - run: pytest -q
+      - name: GUI у справжньому tkinter (xvfb)
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb python3-tk
+          xvfb-run -a python tests/gui_real_smoke.py
+
+  windows-exe:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements_docx_validator.txt tkinterdnd2 pyinstaller
+      - name: Збірка .exe
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --name DocxValidator `
+            --paths . --collect-submodules lpnu_docx_validator `
+            --add-data "lpnu_docx_validator/profiles;lpnu_docx_validator/profiles" `
+            --collect-data docx --collect-all tkinterdnd2 packaging/launcher.py
+          pyinstaller --noconfirm --onefile --console --name docx-validator-cli `
+            --paths . --collect-submodules lpnu_docx_validator `
+            --add-data "lpnu_docx_validator/profiles;lpnu_docx_validator/profiles" `
+            --collect-data docx packaging/launcher.py
+          Copy-Item docx_validator_config.yaml dist/
+      - name: Перевірка .exe
+        run: |
+          dist/docx-validator-cli.exe --version
+          dist/docx-validator-cli.exe list-profiles
+          python -c "import sys; sys.path[:0]=['tests','.']; from docbuilder import good_coursework; from pathlib import Path; good_coursework(Path('sample.docx'))"
+          dist/docx-validator-cli.exe sample.docx --html --docx -p coursework
+          if ($LASTEXITCODE -ne 0) { throw "перевірка sample.docx завершилась з кодом $LASTEXITCODE" }
+          Get-Content sample.report.txt -Encoding utf8 | Select-Object -First 12
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DocxValidator-windows
+          path: dist/*
+      - name: Реліз (для тегів v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/DocxValidator.exe
+            dist/docx-validator-cli.exe
+            dist/docx_validator_config.yaml
